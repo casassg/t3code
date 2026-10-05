@@ -1,5 +1,6 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { requestThreadSectionName } from "../components/ThreadSectionDialog";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -22,10 +23,12 @@ import { useAtomCommand } from "../state/use-atom-command";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
+  readEnvironmentSupportsSections,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  readThreadShells,
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -90,6 +93,7 @@ export function useThreadActionMenu(input: {
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadSection,
     archiveThread,
     deleteThread,
     markThreadUnread,
@@ -151,6 +155,23 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: !threadRuntimeCanArchive(thread.runtime),
+          sections: readEnvironmentSupportsSections(threadRef.environmentId)
+            ? {
+                current: thread.section ?? null,
+                others: [
+                  ...new Set(
+                    readThreadShells().flatMap((candidate) =>
+                      candidate.archivedAt === null &&
+                      candidate.section != null &&
+                      candidate.section !== thread.section &&
+                      readEnvironmentSupportsSections(candidate.environmentId)
+                        ? [candidate.section]
+                        : [],
+                    ),
+                  ),
+                ].toSorted((left, right) => left.localeCompare(right)),
+              }
+            : null,
           supports,
           snoozePresets,
         });
@@ -178,6 +199,19 @@ export function useThreadActionMenu(input: {
             failureToast(title, squashAtomCommandFailure(result));
           }
         };
+        if (action.startsWith("section:")) {
+          const section =
+            action === "section:remove"
+              ? null
+              : action === "section:new"
+                ? await requestThreadSectionName()
+                : action.slice("section:set:".length);
+          if (section === null && action !== "section:remove") return;
+          await reportFailure("Failed to update section", () =>
+            setThreadSection(threadRef, section),
+          );
+          return;
+        }
         switch (action) {
           case "project-settings": {
             const project = projects.find(
@@ -342,6 +376,7 @@ export function useThreadActionMenu(input: {
       projects,
       router,
       setThreadAutoSettle,
+      setThreadSection,
       settleThread,
       snoozeThread,
       threadRef,

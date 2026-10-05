@@ -356,6 +356,9 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+export const ThreadSectionLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+export type ThreadSectionLabel = typeof ThreadSectionLabel.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -405,6 +408,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   // Fractional-index slot in the user-arranged pinned order. Optional so
   // payloads from pre-reorder servers still decode.
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** User-entered sidebar grouping label; null or absent means no section. */
+  section: Schema.optional(Schema.NullOr(ThreadSectionLabel)),
   /** Fractional-index slot in the user-arranged active order. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
@@ -1787,6 +1792,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Sidebar grouping label; omitted by servers that predate thread sections. */
+  section: Schema.optional(Schema.NullOr(ThreadSectionLabel)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /**
@@ -2620,6 +2627,8 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /** Set (string) or clear (null) the sidebar section label; absent leaves it unchanged. */
+    section: Schema.optional(Schema.NullOr(ThreadSectionLabel)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

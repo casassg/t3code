@@ -297,6 +297,23 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;
+        case "set_section": {
+          if (input.section === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "set_section requires section; pass null or an empty string to clear it.",
+            });
+          }
+          const section = input.section?.trim() || null;
+          if (section !== null && section.length > 64) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "section must be at most 64 characters.",
+            });
+          }
+          command = { ...common, type: "thread.metadata.update", section };
+          break;
+        }
         default:
           command = { ...common, type: `thread.${input.action}` };
       }

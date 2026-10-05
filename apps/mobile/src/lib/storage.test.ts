@@ -239,12 +239,14 @@ describe("mobile connection storage", () => {
         threadListSnoozedShelfExpanded: true,
         threadListWorkingShelfExpanded: true,
         workingShelfEnabled: true,
+        threadListCollapsedSections: ["Later"],
       }),
     ).resolves.toEqual({
       threadListSettledShelfExpanded: false,
       threadListSnoozedShelfExpanded: true,
       threadListWorkingShelfExpanded: true,
       workingShelfEnabled: true,
+      threadListCollapsedSections: ["Later"],
     });
 
     await expect(loadPreferences()).resolves.toEqual({
@@ -252,12 +254,14 @@ describe("mobile connection storage", () => {
       threadListSnoozedShelfExpanded: true,
       threadListWorkingShelfExpanded: true,
       workingShelfEnabled: true,
+      threadListCollapsedSections: ["Later"],
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
       threadListSettledShelfExpanded: false,
       threadListSnoozedShelfExpanded: true,
       threadListWorkingShelfExpanded: true,
       workingShelfEnabled: true,
+      threadListCollapsedSections: ["Later"],
     });
   });
 

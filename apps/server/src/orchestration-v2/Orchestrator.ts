@@ -2789,6 +2789,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update": {
+          const sectionOnly =
+            command.section !== undefined &&
+            command.title === undefined &&
+            command.regenerateTitle === undefined &&
+            command.branch === undefined &&
+            command.worktreePath === undefined &&
+            command.limitRecovery === undefined &&
+            command.linkedPullRequest === undefined;
           const previousRecovery =
             thread.limitRecovery?.runId === command.limitRecovery?.runId &&
             thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
@@ -2828,6 +2836,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.section === undefined ? {} : { section: command.section }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -2862,7 +2871,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
-            updatedAt: now,
+            // Filing a thread is arrangement, like active reorder, not activity.
+            updatedAt: sectionOnly ? thread.updatedAt : now,
           };
         }
         case "thread.pull-request.link":

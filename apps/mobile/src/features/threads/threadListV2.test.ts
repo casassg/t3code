@@ -2,6 +2,7 @@ import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
 import {
+  computeThreadMoveAvailability,
   createPendingThreadOrder,
   createThreadMovePlanner,
   threadOrderAfterMove,
@@ -1159,8 +1160,7 @@ describe("pending mobile thread moves", () => {
     const pending = createPendingThreadOrder({
       section,
       ordered,
-      movedId,
-      direction: "up",
+      orderedIds: threadOrderAfterMove(orderedIds, movedId, "up")!,
       assignments,
     });
     const update = (current: EnvironmentThreadShell[], assignment: (typeof assignments)[number]) =>
@@ -1294,7 +1294,7 @@ describe("mobile move availability", () => {
         section,
         reorderableEnvironmentIds: new Set([environmentId]),
       });
-      const assignments = plan(`${environmentId}:move-0`, "down");
+      const assignments = plan(`${environmentId}:move-0`, "down")?.assignments;
       expect(assignments).toHaveLength(1);
       expect(assignments![0]!.id).toBe(`${environmentId}:move-0`);
       expect(assignments![0]!.orderKey > "dd").toBe(true);
@@ -1320,7 +1320,7 @@ describe("mobile move availability", () => {
         section,
         reorderableEnvironmentIds: new Set([environmentId, oldEnvironment]),
       });
-      expect(supported(`${environmentId}:move-0`, "down")).toHaveLength(3);
+      expect(supported(`${environmentId}:move-0`, "down")?.assignments).toHaveLength(3);
     },
   );
 
@@ -1329,8 +1329,8 @@ describe("mobile move availability", () => {
     (section) => {
       const ordered = rows(section, ["bb", "dd", "ff"]);
       const input = { ordered, section, reorderableEnvironmentIds: new Set([environmentId]) };
-      const collision = createThreadMovePlanner(input)(`${environmentId}:move-0`, "down")![0]!
-        .orderKey;
+      const collision = createThreadMovePlanner(input)(`${environmentId}:move-0`, "down")!
+        .assignments[0]!.orderKey;
       const hidden = {
         ...ordered[0]!,
         id: ThreadId.make("snoozed"),
@@ -1342,7 +1342,7 @@ describe("mobile move availability", () => {
       const assignments = createThreadMovePlanner({ ...input, allThreads: [...ordered, hidden] })(
         `${environmentId}:move-0`,
         "down",
-      );
+      )?.assignments;
       expect(assignments).toHaveLength(1);
       expect(assignments![0]!.orderKey).not.toBe(collision);
       expect(assignments![0]!.orderKey > "dd" && assignments![0]!.orderKey < "ff").toBe(true);
@@ -1356,7 +1356,7 @@ describe("mobile move availability", () => {
       section: "active",
       reorderableEnvironmentIds: new Set([environmentId]),
     });
-    const assignments = plan(`${environmentId}:move-4`, "up");
+    const assignments = plan(`${environmentId}:move-4`, "up")?.assignments;
     expect(assignments).toHaveLength(1);
     expect(assignments![0]!.id).toBe(`${environmentId}:move-4`);
     expect(assignments![0]!.orderKey > "bb").toBe(true);
@@ -1404,7 +1404,7 @@ describe("thread drag destinations", () => {
       );
       const ids = ordered.map((row) => `${row.environmentId}:${row.id}`);
       const direction = { targetId: ids[0]!, placement: "before" as const };
-      const assignments = createThreadMovePlanner({
+      const { assignments, orderedIds } = createThreadMovePlanner({
         ordered,
         section,
         reorderableEnvironmentIds: new Set([environmentId]),
@@ -1412,8 +1412,7 @@ describe("thread drag destinations", () => {
       const pending = createPendingThreadOrder({
         section,
         ordered,
-        movedId: ids[3]!,
-        direction,
+        orderedIds,
         assignments,
       });
       expect(pending.orderedIds).toEqual([ids[3], ids[0], ids[1], ids[2]]);
@@ -1469,7 +1468,10 @@ it("allows a long drop past an old server even when both adjacent moves fail", (
   const movedId = `${environmentId}:a`;
   expect(planner(movedId, "up")).toBeNull();
   expect(planner(movedId, "down")).toBeNull();
-  const assignments = planner(movedId, { targetId: `${environmentId}:d`, placement: "after" });
+  const assignments = planner(movedId, {
+    targetId: `${environmentId}:d`,
+    placement: "after",
+  })?.assignments;
   expect(assignments).toHaveLength(1);
   expect(assignments![0]!.id).toBe(movedId);
   expect(assignments![0]!.orderKey > "p").toBe(true);
@@ -1486,7 +1488,7 @@ describe("cross-section thread drops", () => {
       allThreads: [thread],
       section,
       reorderableEnvironmentIds: new Set([environmentId]),
-    })(id, destination);
+    })(id, destination)?.assignments;
     expect(plan).toHaveLength(1);
     expect(plan![0]!.id).toBe(id);
   });
@@ -1505,7 +1507,7 @@ describe("cross-section thread drops", () => {
       allThreads: [a, b, source],
       section: "pinned",
       reorderableEnvironmentIds: new Set([environmentId]),
-    })(id, destination);
+    })(id, destination)?.assignments;
     expect(plan).toHaveLength(1);
     expect(plan![0]!.orderKey > "h" && plan![0]!.orderKey < "z").toBe(true);
     expect(
@@ -2300,5 +2302,211 @@ describe("Working section beta", () => {
       "v2-settled-shelf",
       "settled",
     ]);
+  });
+});
+
+describe("thread sections", () => {
+  const sectionEnvironmentIds = new Set([environmentId]);
+  const reorderableEnvironmentIds = new Set([environmentId]);
+  const rows = [
+    makeThread({ id: ThreadId.make("p1"), title: "p1", activeOrderKey: "b" }),
+    makeThread({ id: ThreadId.make("p2"), title: "p2", activeOrderKey: "d" }),
+    makeThread({ id: ThreadId.make("a1"), title: "a1", section: "Alpha", activeOrderKey: "f" }),
+    makeThread({ id: ThreadId.make("a2"), title: "a2", section: "Alpha", activeOrderKey: "h" }),
+    makeThread({ id: ThreadId.make("b1"), title: "b1", section: "Beta", activeOrderKey: "j" }),
+  ];
+  const id = (threadId: string) => `${environmentId}:${threadId}`;
+  const ordered = getThreadListV2OrderedSection({
+    threads: rows,
+    section: "active",
+    now: NOW,
+    sectionEnvironmentIds,
+  });
+  const planner = createThreadMovePlanner({
+    ordered,
+    section: "active",
+    reorderableEnvironmentIds,
+    sectionEnvironmentIds,
+  });
+
+  it("orders plain rows first, then sections alphabetically", () => {
+    const shuffled = [rows[4]!, rows[2]!, rows[0]!, rows[3]!, rows[1]!];
+    expect(
+      getThreadListV2OrderedSection({
+        threads: shuffled,
+        section: "active",
+        now: NOW,
+        sectionEnvironmentIds,
+      }).map((row) => row.id),
+    ).toEqual(["p1", "p2", "a1", "a2", "b1"]);
+  });
+
+  it("moves within a section without touching its label", () => {
+    const plan = planner(id("a1"), "down")!;
+    expect(plan.setLabel).toBeUndefined();
+    expect(plan.orderedIds).toEqual([id("p1"), id("p2"), id("a2"), id("a1"), id("b1")]);
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]!.id).toBe(id("a1"));
+    expect(plan.assignments[0]!.orderKey > "h").toBe(true);
+  });
+
+  it("moves down past the last row of a group to the top of the next section", () => {
+    const plain = planner(id("p2"), "down")!;
+    expect(plain.setLabel).toBe("Alpha");
+    expect(plain.orderedIds).toEqual(ordered.map((row) => id(row.id)));
+    expect(plain.assignments).toHaveLength(1);
+    expect(plain.assignments[0]!.orderKey < "f").toBe(true);
+    const section = planner(id("a2"), "down")!;
+    expect(section.setLabel).toBe("Beta");
+    expect(section.assignments[0]!.orderKey < "j").toBe(true);
+  });
+
+  it("moves up past the first row of a section to the bottom of the previous group", () => {
+    const toPlain = planner(id("a1"), "up")!;
+    expect(toPlain.setLabel).toBeNull();
+    expect(toPlain.assignments[0]!.orderKey > "d").toBe(true);
+    const toSection = planner(id("b1"), "up")!;
+    expect(toSection.setLabel).toBe("Alpha");
+    expect(toSection.assignments[0]!.orderKey > "h").toBe(true);
+  });
+
+  it("stops at the ends of the whole list", () => {
+    expect(planner(id("p1"), "up")).toBeNull();
+    expect(planner(id("b1"), "down")).toBeNull();
+  });
+
+  it("changes the label when a drop lands in another group", () => {
+    const intoSection = planner(id("p1"), {
+      targetId: id("a2"),
+      placement: "after",
+    })!;
+    expect(intoSection.setLabel).toBe("Alpha");
+    expect(intoSection.assignments[0]!.orderKey > "h").toBe(true);
+    const outToInbox = planner(id("a2"), {
+      section: "active",
+      targetId: null,
+      placement: "before",
+      label: null,
+    })!;
+    expect(outToInbox.setLabel).toBeNull();
+    expect(outToInbox.assignments[0]!.orderKey < "b").toBe(true);
+  });
+
+  it("never relabels threads on servers without sections", () => {
+    const plain = createThreadMovePlanner({
+      ordered,
+      section: "active",
+      reorderableEnvironmentIds,
+    });
+    expect(plain(id("p2"), "down")!.setLabel).toBeUndefined();
+    expect(planner(id("p2"), "down")).not.toBeNull();
+    const unsupportedPlanner = createThreadMovePlanner({
+      ordered,
+      section: "active",
+      reorderableEnvironmentIds,
+      sectionEnvironmentIds: new Set(),
+    });
+    expect(unsupportedPlanner(id("p2"), "down")?.setLabel).toBeUndefined();
+  });
+
+  it("offers boundary moves in menu availability", () => {
+    const availability = computeThreadMoveAvailability({
+      ordered,
+      allThreads: rows,
+      section: "active",
+      reorderableEnvironmentIds,
+      sectionEnvironmentIds,
+    });
+    expect(availability.get(id("p1"))).toEqual({ canMoveUp: false, canMoveDown: true });
+    expect(availability.get(id("p2"))).toEqual({ canMoveUp: true, canMoveDown: true });
+    expect(availability.get(id("a1"))).toEqual({ canMoveUp: true, canMoveDown: true });
+    expect(availability.get(id("a2"))).toEqual({ canMoveUp: true, canMoveDown: true });
+    expect(availability.get(id("b1"))).toEqual({ canMoveUp: true, canMoveDown: false });
+  });
+
+  describe("list layout", () => {
+    const layout = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
+      buildThreadListV2Items({
+        threads: rows,
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+        sectionEnvironmentIds,
+        ...input,
+      });
+    const describeItems = (input: ReturnType<typeof layout>, collapsed?: Set<string>) =>
+      buildThreadListV2ListItems({
+        items: input.items,
+        pendingTasks: [makePendingTask("queued")],
+        sections: input.sections,
+        collapsedSections: collapsed,
+        settledCount: input.settledCount,
+        settledShelfHeaderIndex: input.settledShelfHeaderIndex,
+      }).map((item) =>
+        item.type === "v2-thread"
+          ? item.item.thread.id
+          : item.type === "v2-pending"
+            ? item.pendingTask.title
+            : item.type === "v2-section"
+              ? `[${item.name} ${item.count}${item.expanded ? "" : " collapsed"}]`
+              : item.type,
+      );
+
+    it("renders section groups after plain rows and before pending tasks", () => {
+      expect(describeItems(layout())).toEqual([
+        "p1",
+        "p2",
+        "[Alpha 2]",
+        "a1",
+        "a2",
+        "[Beta 1]",
+        "b1",
+        "queued",
+      ]);
+    });
+
+    it("folds collapsed sections to their header but keeps the selected row", () => {
+      const collapsed = new Set(["Alpha", "Beta"]);
+      expect(describeItems(layout({ collapsedSections: collapsed }), collapsed)).toEqual([
+        "p1",
+        "p2",
+        "[Alpha 2 collapsed]",
+        "[Beta 1 collapsed]",
+        "queued",
+      ]);
+      expect(
+        describeItems(
+          layout({ collapsedSections: collapsed, selectedThreadKey: id("a2") }),
+          collapsed,
+        ),
+      ).toEqual(["p1", "p2", "[Alpha 2 collapsed]", "a2", "[Beta 1 collapsed]", "queued"]);
+    });
+
+    it("lets lifecycle shelves win and ignores labels on unsupported servers", () => {
+      const lifecycle = [
+        ...rows.slice(0, 2),
+        { ...rows[2]!, pinnedAt: NOW, pinOrderKey: "a" },
+        { ...rows[3]!, settledOverride: "settled" as const },
+        rows[4]!,
+      ];
+      expect(describeItems(layout({ threads: lifecycle }))).toEqual([
+        "a1",
+        "p1",
+        "p2",
+        "[Beta 1]",
+        "b1",
+        "queued",
+        "v2-settled-shelf",
+        "a2",
+      ]);
+      expect(describeItems(layout({ sectionEnvironmentIds: new Set() }))).toEqual([
+        "p1",
+        "p2",
+        "a1",
+        "a2",
+        "b1",
+        "queued",
+      ]);
+    });
   });
 });

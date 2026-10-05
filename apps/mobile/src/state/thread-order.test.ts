@@ -50,8 +50,7 @@ function fixture() {
   const pending = createPendingThreadOrder({
     section: "active",
     ordered: rows,
-    movedId: "env:b",
-    direction: "up",
+    orderedIds: ["env:b", "env:a"],
     assignments: [
       { id: "env:b", orderKey: "aa" },
       { id: "env:a", orderKey: "bb" },

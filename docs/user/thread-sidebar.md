@@ -112,6 +112,19 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+### Group threads into sections
+
+On web and desktop, open a thread's menu and choose **Move to section** to group it with related
+work. Pick an existing section, or **New section…** to name one (up to 64 characters). Choose
+**Remove from section** to return it to the plain active list. A section exists while at least one
+thread is in it, and sections appear alphabetically below the other active threads. Click a
+section's header to collapse it. Dragging a thread onto a section's header, or between its rows,
+moves it there; dropping on a collapsed header puts it at the top.
+
+Pinned, snoozed, settled, and working threads stay in their own sections, and a thread keeps its
+section name so it returns there when it becomes active again. Sections need a server that
+supports them; update the T3 Code server if the menu item is missing.
+
 ### Fold working threads (beta)
 
 Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →

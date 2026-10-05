@@ -16,6 +16,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  sections: null,
   supports: {
     settlement: true,
     autoSettleOptOut: true,
@@ -162,6 +163,21 @@ describe("buildThreadActionMenuItems", () => {
         },
       }),
     ).toContain("archive");
+  });
+
+  it("offers existing sections, a new one, and removal only when sectioned", () => {
+    const sectionIds = (current: string | null) =>
+      allIds({ ...baseState, sections: { current, others: ["Review"] } }).filter((id) =>
+        id.startsWith("section"),
+      );
+    expect(sectionIds(null)).toEqual(["section", "section:set:Review", "section:new"]);
+    expect(sectionIds("Docs")).toEqual([
+      "section",
+      "section:set:Review",
+      "section:new",
+      "section:remove",
+    ]);
+    expect(allIds(baseState)).not.toContain("section");
   });
 
   it("disables archive while the thread is running", () => {

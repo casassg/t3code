@@ -104,6 +104,7 @@ describe("thread list environment projection", () => {
     ["threadPinning", "pinningEnvironmentIds"],
     ["threadPinReorder", "pinReorderEnvironmentIds"],
     ["threadActiveReorder", "activeReorderEnvironmentIds"],
+    ["threadSections", "sectionEnvironmentIds"],
     ["threadTitleRegeneration", "titleRegenerationEnvironmentIds"],
   ] as const)("tracks enabling and removing %s", (capability, collection) => {
     const h = harness();

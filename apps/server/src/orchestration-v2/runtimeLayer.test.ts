@@ -1974,6 +1974,72 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("sets, changes, and clears a thread section through metadata updates", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("runtime-layer-section-thread");
+      const setSection = (name: string, section: string | null) =>
+        orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`runtime-layer-section-${name}`),
+          threadId,
+          section,
+        });
+      const read = Effect.gen(function* () {
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const shell = yield* orchestrator.getThreadShell(threadId);
+        assert.isNotNull(shell);
+        assert.strictEqual(shell.section, projection.thread.section ?? null);
+        return projection.thread;
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-section-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-section-project"),
+        title: "Section thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const created = yield* read;
+      assert.isNull(created.section ?? null);
+
+      yield* setSection("set", "Work");
+      const filed = yield* read;
+      assert.equal(filed.section, "Work");
+      assert.deepEqual(filed.updatedAt, created.updatedAt);
+
+      yield* setSection("same", "Work");
+      assert.deepEqual((yield* read).updatedAt, filed.updatedAt);
+
+      yield* setSection("change", "Personal");
+      assert.equal((yield* read).section, "Personal");
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-section-rename"),
+        threadId,
+        title: "Renamed",
+      });
+      const renamed = yield* read;
+      assert.equal(renamed.section, "Personal");
+      assert.equal(renamed.title, "Renamed");
+
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal((yield* read).section, "Personal");
+
+      yield* setSection("clear", null);
+      assert.isNull((yield* read).section);
+    }),
+  );
+
   it.effect("keeps the branch pull request when linking another pull request", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

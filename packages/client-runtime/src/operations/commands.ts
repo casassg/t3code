@@ -95,6 +95,11 @@ export interface PinThreadInput extends ThreadCommandInput {
 }
 export type UnpinThreadInput = ThreadCommandInput;
 
+export interface SetThreadSectionInput extends ThreadCommandInput {
+  /** Sidebar section label (max 64 chars); null clears it. */
+  readonly section: string | null;
+}
+
 export interface ReorderPinnedThreadInput extends ThreadCommandInput {
   /** Fractional-index key that sorts between the drop position's neighbors. */
   readonly orderKey: string;
@@ -470,6 +475,17 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     enabled: input.enabled,
+  });
+});
+
+export const setThreadSection = Effect.fn("EnvironmentCommands.setThreadSection")(function* (
+  input: SetThreadSectionInput,
+) {
+  return yield* dispatch({
+    type: "thread.metadata.update",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    section: input.section?.trim() || null,
   });
 });
 
