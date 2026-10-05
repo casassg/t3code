@@ -49,6 +49,7 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  onImplementPlanWithOptions: () => void;
 }
 
 const formatPendingPrimaryActionLabel = (input: {
@@ -101,6 +102,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
+  onImplementPlanWithOptions,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
@@ -240,6 +242,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               onClick={() => void onImplementPlanInNewThread()}
             >
               Implement in a new thread
+            </MenuItem>
+            <MenuItem
+              disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
+              onClick={() => void onImplementPlanWithOptions()}
+            >
+              Implement in a new thread with...
             </MenuItem>
           </MenuPopup>
         </Menu>

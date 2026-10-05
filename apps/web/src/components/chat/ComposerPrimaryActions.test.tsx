@@ -41,6 +41,7 @@ function renderPendingActions(isRunning: boolean) {
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
+      onImplementPlanWithOptions: () => {},
     }),
   );
 }
@@ -63,6 +64,7 @@ function renderSendButton(sendDisabledReason: string | null = null) {
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
+      onImplementPlanWithOptions: () => {},
     }),
   );
 }
