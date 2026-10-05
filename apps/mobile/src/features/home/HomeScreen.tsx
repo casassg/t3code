@@ -41,6 +41,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionHeader,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -57,7 +58,10 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
-import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
+import {
+  useThreadListV2ShelfPreferences,
+  useThreadSectionNames,
+} from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
@@ -112,6 +116,8 @@ interface HomeScreenProps {
     direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSetThreadSection: (thread: EnvironmentThreadShell, section: string | null) => void;
+  readonly onNewThreadSection: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -466,6 +472,8 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const {
     loaded: shelfPreferencesLoaded,
+    collapsedSections,
+    toggleSection,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
@@ -500,8 +508,10 @@ export function HomeScreen(props: HomeScreenProps) {
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
+    sectionEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
+  const sectionNames = useThreadSectionNames(props.threads, sectionEnvironmentIds);
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
   // Up/down menu availability for every card, computed once per section per
@@ -513,12 +523,14 @@ export function HomeScreen(props: HomeScreenProps) {
         allThreads: props.threads,
         section,
         pendingOrder,
+        sectionEnvironmentIds,
         reorderableEnvironmentIds:
           section === "pinned" ? pinReorderEnvironmentIds : activeReorderEnvironmentIds,
         ordered: getThreadListV2OrderedSection({
           threads: props.threads,
           section,
           pendingOrder,
+          sectionEnvironmentIds,
           now: new Date().toISOString(),
           settlementEnvironmentIds,
           snoozeEnvironmentIds,
@@ -534,6 +546,7 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfEnabled,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
+    sectionEnvironmentIds,
     props.threads,
     pendingOrder,
     queuedThreadKeys,
@@ -563,9 +576,13 @@ export function HomeScreen(props: HomeScreenProps) {
       inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
       settledShelfExpanded,
+      sectionEnvironmentIds,
+      collapsedSections,
       selectedThreadKey: null,
     });
   }, [
+    sectionEnvironmentIds,
+    collapsedSections,
     workingShelfEnabled,
     workingShelfExpanded,
     pendingOrder,
@@ -625,6 +642,8 @@ export function HomeScreen(props: HomeScreenProps) {
         workingCount: threadListV2Layout.workingCount,
         workingShelfExpanded,
         workingShelfHeaderIndex: threadListV2Layout.workingShelfHeaderIndex,
+        sections: threadListV2Layout.sections,
+        collapsedSections,
         snoozedCount: threadListV2Layout.snoozedCount,
         snoozedShelfExpanded,
         snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
@@ -641,6 +660,7 @@ export function HomeScreen(props: HomeScreenProps) {
       nowMinute,
       queuedThreadKeys,
       threadMoveAvailability,
+      collapsedSections,
       settledShelfExpanded,
       shelfPreferencesLoaded,
       snoozedShelfExpanded,
@@ -679,6 +699,17 @@ export function HomeScreen(props: HomeScreenProps) {
             showTrailingDivider={item.showTrailingDivider}
             onSelectPendingTask={props.onSelectPendingTask}
             onDeletePendingTask={props.onDeletePendingTask}
+          />
+        );
+      }
+      if (item.type === "v2-section") {
+        return (
+          <ThreadListV2SectionHeader
+            name={item.name}
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={() => toggleSection(item.name)}
           />
         );
       }
@@ -750,6 +781,9 @@ export function HomeScreen(props: HomeScreenProps) {
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
           onRenameThread={handleRenameThread}
+          sectionNames={sectionEnvironmentIds.has(thread.environmentId) ? sectionNames : undefined}
+          onSetThreadSection={props.onSetThreadSection}
+          onNewThreadSection={props.onNewThreadSection}
           onRegenerateThreadTitle={handleRegenerateThreadTitle}
           titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
@@ -803,8 +837,13 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectPendingTask,
       props.onSelectThread,
       props.onNewThreadOnBranch,
+      props.onNewThreadSection,
+      props.onSetThreadSection,
       props.savedConnectionsById,
       resolveProviderInstance,
+      sectionEnvironmentIds,
+      sectionNames,
+      toggleSection,
       providersByEnvironmentId,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -834,8 +873,10 @@ export function HomeScreen(props: HomeScreenProps) {
       threadSearchMatchByKey,
       // Rows read it for their reorder menu items.
       workingShelfEnabled,
+      sectionNames,
     }),
     [
+      sectionNames,
       projectByKey,
       props.searchQuery,
       props.savedConnectionsById,

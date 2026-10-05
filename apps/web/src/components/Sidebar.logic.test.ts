@@ -59,6 +59,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  sidebarMarkerId,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
@@ -2207,10 +2208,15 @@ describe("Working shelf (beta)", () => {
 
   describe("dragging", () => {
     const marker = (name: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker: name });
-    const row = (key: string, section: SidebarSection): SidebarListItem => ({
+    const row = (
+      key: string,
+      section: SidebarSection,
+      label: string | null = null,
+    ): SidebarListItem => ({
       kind: "thread",
       key,
       section,
+      label,
     });
     // Pinned p1 | Active a1 a2 | Working w1 | Settled s1
     const items: readonly SidebarListItem[] = [
@@ -2229,6 +2235,7 @@ describe("Working shelf (beta)", () => {
       expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();
       expect(resolveSidebarDropTarget(items, "p1", "a2")).toEqual({
         section: "active",
+        label: null,
         pinnedOrder: [],
         activeOrder: ["a1", "a2", "p1"],
       });
@@ -2251,7 +2258,12 @@ describe("Working shelf (beta)", () => {
           ...base,
           activeKey: "a1",
           activeSection: "active",
-          target: { section: "active", pinnedOrder: ["p1"], activeOrder: ["a2", "a1"] },
+          target: {
+            section: "active",
+            label: null,
+            pinnedOrder: ["p1"],
+            activeOrder: ["a2", "a1"],
+          },
         }),
       ).toEqual({ kind: "none" });
       expect(
@@ -2259,7 +2271,12 @@ describe("Working shelf (beta)", () => {
           ...base,
           activeKey: "p1",
           activeSection: "pinned",
-          target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
+          target: {
+            section: "active",
+            label: null,
+            pinnedOrder: [],
+            activeOrder: ["a1", "p1", "a2"],
+          },
         }),
       ).toEqual({
         kind: "move-active",
@@ -2268,6 +2285,174 @@ describe("Working shelf (beta)", () => {
         unpin: true,
         unsettle: false,
         unsnooze: false,
+      });
+    });
+
+    describe("user sections", () => {
+      const header = (label: string): SidebarListItem => ({
+        kind: "marker",
+        marker: "section-header",
+        label,
+      });
+      const reviewId = sidebarMarkerId("section-header", "Review");
+      const docsId = sidebarMarkerId("section-header", "Docs");
+      // Pinned p1 | Active a1 a2 | Review r1 r2 | Docs d1 | Settled s1
+      const sectioned: readonly SidebarListItem[] = [
+        marker("pinned-header"),
+        row("p1", "pinned"),
+        marker("pinned-divider"),
+        row("a1", "active"),
+        row("a2", "active"),
+        header("Review"),
+        row("r1", "active", "Review"),
+        row("r2", "active", "Review"),
+        header("Docs"),
+        row("d1", "active", "Docs"),
+        marker("settled-header"),
+        row("s1", "settled"),
+      ];
+      const keys = new Map([
+        ["p1", "m"],
+        ["a1", "c"],
+        ["a2", "k"],
+        ["r1", "d"],
+        ["r2", "p"],
+        ["d1", "e"],
+      ]);
+      const base = {
+        pinnedOrder: ["p1"],
+        pinnedKeysById: new Map([["p1", "m"]]),
+        activeOrder: ["a1", "a2"],
+        sectionOrders: new Map([
+          ["Review", ["r1", "r2"]],
+          ["Docs", ["d1"]],
+        ]),
+        activeKeysById: keys,
+        supportsSections: true,
+      };
+      const drop = (
+        activeKey: string,
+        activeSection: SidebarSection,
+        overId: string,
+        extra: Partial<Parameters<typeof planSidebarThreadDrop>[0]> = {},
+      ) => {
+        const target = resolveSidebarDropTarget(sectioned, activeKey, overId)!;
+        return {
+          target,
+          plan: planSidebarThreadDrop({ ...base, activeKey, activeSection, target, ...extra }),
+        };
+      };
+
+      it("labels a row dropped into a section and orders it among that section's rows", () => {
+        const { target, plan } = drop("a1", "active", "r2");
+        expect(target).toMatchObject({ section: "active", label: "Review" });
+        expect(target.activeOrder).toEqual(["r1", "r2", "a1"]);
+        expect(plan).toMatchObject({
+          kind: "move-active",
+          setLabel: "Review",
+          unpin: false,
+          order: ["r1", "r2", "a1"],
+        });
+        if (plan.kind !== "move-active") return;
+        expect(plan.assignments.map(({ id }) => id)).toEqual(["a1"]);
+        expect(plan.assignments[0]!.orderKey > "p").toBe(true);
+      });
+
+      it("moves a row between sections", () => {
+        const { target, plan } = drop("r1", "active", "d1", { activeLabel: "Review" });
+        expect(target).toMatchObject({ label: "Docs", activeOrder: ["d1", "r1"] });
+        expect(plan).toMatchObject({ kind: "move-active", setLabel: "Docs" });
+      });
+
+      it("clears the label when a row returns to the plain inbox", () => {
+        const { target, plan } = drop("r1", "active", "a1", { activeLabel: "Review" });
+        expect(target).toMatchObject({ label: null, activeOrder: ["r1", "a1", "a2"] });
+        expect(plan).toMatchObject({ kind: "move-active", setLabel: null });
+      });
+
+      it("unpins and labels a pinned row dropped into a section", () => {
+        const { target, plan } = drop("p1", "pinned", "r1");
+        expect(target).toMatchObject({ label: "Review", pinnedOrder: [] });
+        expect(plan).toMatchObject({ kind: "move-active", setLabel: "Review", unpin: true });
+      });
+
+      it("keeps a sectioned row's label when it is pinned or settled", () => {
+        expect(drop("r1", "active", "p1", { activeLabel: "Review" }).plan.kind).toBe("pin");
+        expect(drop("r1", "active", "s1", { activeLabel: "Review" }).plan).toEqual({
+          kind: "settle",
+        });
+      });
+
+      it("drops onto a collapsed header at the top of the hidden rows", () => {
+        const collapsed = sectioned.filter(
+          (item) => !(item.kind === "thread" && item.key === "d1"),
+        );
+        const down = resolveSidebarDropTarget(collapsed, "a1", docsId)!;
+        expect(down).toMatchObject({ label: "Docs", activeOrder: ["a1"], intoCollapsed: true });
+        const plan = planSidebarThreadDrop({
+          ...base,
+          activeKey: "a1",
+          activeSection: "active",
+          target: down,
+        });
+        expect(plan).toMatchObject({ kind: "move-active", setLabel: "Docs", order: ["a1", "d1"] });
+        if (plan.kind !== "move-active") return;
+        expect(plan.assignments).toHaveLength(1);
+        expect(plan.assignments[0]!.orderKey < "e").toBe(true);
+
+        const above = [
+          marker("pinned-divider"),
+          header("Docs"),
+          header("Review"),
+          row("r1", "active", "Review"),
+        ];
+        const up = resolveSidebarDropTarget(above, "r1", docsId)!;
+        expect(up).toMatchObject({ label: "Docs", activeOrder: ["r1"], intoCollapsed: true });
+      });
+
+      it("does nothing when a row is dropped where it started", () => {
+        expect(drop("a1", "active", "a1").plan).toEqual({ kind: "none" });
+        expect(drop("r2", "active", "r2", { activeLabel: "Review" }).plan).toEqual({
+          kind: "none",
+        });
+      });
+
+      it("only changes the label when the inbox is time-ordered", () => {
+        const timed = { activeTimeOrdered: true };
+        expect(drop("a1", "active", "r2", timed).plan).toEqual({
+          kind: "move-active",
+          order: null,
+          assignments: [],
+          unpin: false,
+          unsettle: false,
+          unsnooze: false,
+          setLabel: "Review",
+        });
+        expect(drop("r1", "active", "r2", { ...timed, activeLabel: "Review" }).plan).toEqual({
+          kind: "none",
+        });
+      });
+
+      it("refuses sections on servers without the capability", () => {
+        expect(drop("a1", "active", "r2", { supportsSections: false }).plan).toEqual({
+          kind: "none",
+        });
+        expect(
+          drop("a1", "active", "a2", { supportsSections: false, activeLabel: "Review" }).plan,
+        ).not.toMatchObject({ setLabel: expect.anything() });
+      });
+
+      it("names the badge verb for section changes", () => {
+        expect(resolveSidebarDropVerb("active", "active", null, "Review")).toBe("section");
+        expect(resolveSidebarDropVerb("pinned", "active", null, "Review")).toBe("section");
+        expect(resolveSidebarDropVerb("active", "active", "Review", null)).toBe("unsection");
+        expect(resolveSidebarDropVerb("active", "active", "Review", "Review")).toBeNull();
+        expect(resolveSidebarDropVerb("pinned", "active")).toBe("unpin");
+      });
+
+      it("keeps section marker ids distinct from thread keys", () => {
+        expect(reviewId).not.toContain(":");
+        expect(sidebarMarkerId("section-header", "a:b")).not.toContain(":");
       });
     });
   });

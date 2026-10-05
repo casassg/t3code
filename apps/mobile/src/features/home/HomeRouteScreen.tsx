@@ -68,6 +68,8 @@ export function HomeRouteScreen() {
     setThreadAutoSettle,
     moveThread,
     renameThread,
+    setThreadSection,
+    promptThreadSection,
     regenerateThreadTitle,
     unsettleThread,
   } = useThreadListActions();
@@ -226,6 +228,8 @@ export function HomeRouteScreen() {
           onSetThreadAutoSettle={setThreadAutoSettle}
           onMoveThread={moveThread}
           onRenameThread={renameThread}
+          onSetThreadSection={setThreadSection}
+          onNewThreadSection={promptThreadSection}
           onRegenerateThreadTitle={regenerateThreadTitle}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}

@@ -32,6 +32,7 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
+  readEnvironmentSupportsSections,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsVisitedTracking,
@@ -158,6 +159,18 @@ export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<Thre
   }
 }
 
+export class ThreadSectionsUnsupportedError extends Schema.TaggedError<ThreadSectionsUnsupportedError>()(
+  "ThreadSectionsUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "Update this environment's server to organize threads into sections.";
+  }
+}
+
 export async function requestThreadUnpinConfirmation(input: {
   enabled: boolean;
   title: string;
@@ -273,6 +286,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const reorderActiveThreadMutation = useAtomCommand(threadEnvironment.reorderActive, {
+    reportFailure: false,
+  });
+  const setThreadSectionMutation = useAtomCommand(threadEnvironment.setSection, {
     reportFailure: false,
   });
   const snoozeThreadMutation = useAtomCommand(threadEnvironment.snooze, {
@@ -859,6 +875,26 @@ export function useThreadActions() {
     [reorderActiveThreadMutation],
   );
 
+  const setThreadSection = useCallback(
+    async (target: ScopedThreadRef, section: string | null) => {
+      if (!readEnvironmentSupportsSections(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadSectionsUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return setThreadSectionMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, section },
+      });
+    },
+    [setThreadSectionMutation],
+  );
+
   const unsnoozeThread = useCallback(
     async (target: ScopedThreadRef) => {
       if (!readEnvironmentSupportsSnooze(target.environmentId)) {
@@ -972,6 +1008,7 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadSection,
       markThreadUnread,
       setThreadAutoSettle,
     }),
@@ -985,6 +1022,7 @@ export function useThreadActions() {
       reorderPinnedThread,
       reorderActiveThread,
       setThreadAutoSettle,
+      setThreadSection,
       settleThread,
       snoozeThread,
       unarchiveThread,

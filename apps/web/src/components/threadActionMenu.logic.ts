@@ -20,6 +20,10 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "section"
+  | "section:new"
+  | "section:remove"
+  | `section:set:${string}`
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -87,6 +91,15 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  /**
+   * Sidebar sections the thread can move to; null where the server has no
+   * sections or the surface has no list to read them from.
+   */
+  readonly sections: {
+    readonly current: string | null;
+    /** Existing names other than the thread's own. */
+    readonly others: ReadonlyArray<string>;
+  } | null;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   readonly supports: {
@@ -152,6 +165,35 @@ export function buildThreadActionMenuItems(
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
               },
+        ]
+      : []),
+    ...(state.sections
+      ? [
+          {
+            id: "section" as const,
+            label: "Move to section",
+            icon: "folder",
+            children: [
+              ...state.sections.others.map((name) => ({
+                id: `section:set:${name}` as const,
+                label: name,
+              })),
+              {
+                id: "section:new" as const,
+                label: "New section…",
+                separatorBefore: state.sections.others.length > 0,
+              },
+              ...(state.sections.current !== null
+                ? [
+                    {
+                      id: "section:remove" as const,
+                      label: "Remove from section",
+                      separatorBefore: true,
+                    },
+                  ]
+                : []),
+            ],
+          },
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },

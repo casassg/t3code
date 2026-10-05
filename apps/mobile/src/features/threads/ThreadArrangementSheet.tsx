@@ -24,6 +24,7 @@ import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useThreadListActions } from "../home/useThreadListActions";
 import {
   createThreadMovePlanner,
+  groupThreadsBySection,
   threadDragAction,
   type ThreadMoveDestination,
 } from "./threadOrder";
@@ -39,6 +40,9 @@ type Row = {
   key: string;
   section: Section;
   thread?: EnvironmentThreadShell;
+  /** Header row of a named active section, with its thread count. */
+  label?: string;
+  count?: number;
   offset: number;
   height: number;
 };
@@ -173,12 +177,22 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     );
     return () => clearTimeout(timer);
   }, [threads, now]);
+  const sectionEnvironmentIds = useMemo(
+    () =>
+      new Set(
+        [...configs].flatMap(([id, config]) =>
+          config.environment.capabilities.threadSections ? [id] : [],
+        ),
+      ),
+    [configs],
+  );
   const sections = useMemo(() => {
     const shared = {
       threads,
       now,
       queuedThreadKeys,
       pendingOrder,
+      sectionEnvironmentIds,
       settlementEnvironmentIds: new Set(
         [...configs].flatMap(([id, config]) =>
           config.environment.capabilities.threadSettlement ? [id] : [],
@@ -200,18 +214,30 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       pinned,
       // The Working beta orders the inbox by time; show that order here too.
       active: workingShelfEnabled
-        ? sortInboxThreadsByReturn(active, threadListInboxReturns.returnedAt)
+        ? groupThreadsBySection(
+            sortInboxThreadsByReturn(active, threadListInboxReturns.returnedAt),
+            sectionEnvironmentIds,
+          ).flatMap((group) => group.threads)
         : active,
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: parked.filter((thread) => !effectiveSnoozed(thread, { now })),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [
+    threads,
+    configs,
+    now,
+    queuedThreadKeys,
+    pendingOrder,
+    workingShelfEnabled,
+    sectionEnvironmentIds,
+  ]);
   const planners = useMemo(() => {
     const planner = (section: "pinned" | "active") =>
       createThreadMovePlanner({
         ordered: sections[section],
         allThreads: threads,
         section,
+        sectionEnvironmentIds,
         // A time-ordered inbox has no slots, so Active takes no drops while
         // the Working beta is on. The saved arrangement stays untouched.
         reorderableEnvironmentIds: new Set(
@@ -227,7 +253,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
         ),
       });
     return { pinned: planner("pinned"), active: planner("active") };
-  }, [sections, threads, configs, workingShelfEnabled]);
+  }, [sections, threads, configs, workingShelfEnabled, sectionEnvironmentIds]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     let offset = 0;
@@ -236,13 +262,30 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       result.push({ key: section, section, offset, height: HEADER_HEIGHT });
       offset += HEADER_HEIGHT;
       if ((section === "snoozed" || section === "settled") && !expanded[section]) continue;
-      for (const thread of sections[section]) {
-        result.push({ key: keyOf(thread), section, thread, offset, height: ROW_HEIGHT });
-        offset += ROW_HEIGHT;
+      const groups =
+        section === "active"
+          ? groupThreadsBySection(sections.active, sectionEnvironmentIds)
+          : [{ label: null, threads: sections[section] }];
+      for (const group of groups) {
+        if (group.label !== null) {
+          result.push({
+            key: `section:${group.label}`,
+            section,
+            label: group.label,
+            count: group.threads.length,
+            offset,
+            height: HEADER_HEIGHT,
+          });
+          offset += HEADER_HEIGHT;
+        }
+        for (const thread of group.threads) {
+          result.push({ key: keyOf(thread), section, thread, offset, height: ROW_HEIGHT });
+          offset += ROW_HEIGHT;
+        }
       }
     }
     return result;
-  }, [sections, expanded]);
+  }, [sections, expanded, sectionEnvironmentIds]);
   const list = useRef<FlatList<Row>>(null);
   const geometry = useRef({ height: 0, offset: 0 });
   const drag = useRef<Drag | null>(null);
@@ -292,6 +335,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       const candidate: Destination = {
         section: target.section,
         targetId: target.thread ? target.key : null,
+        ...(target.thread ? {} : { label: target.label ?? null }),
         placement:
           !target.thread || contentY < target.offset + target.height / 2 ? "before" : "after",
       };
@@ -307,6 +351,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     if (
       current.destination?.targetId !== destination?.targetId ||
       current.destination?.section !== destination?.section ||
+      current.destination?.label !== destination?.label ||
       current.destination?.placement !== destination?.placement
     ) {
       current.destination = destination;
@@ -361,7 +406,9 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     ? rows.find(
         (row) =>
           row.section === destination.section &&
-          row.key === (destination.targetId ?? destination.section),
+          row.key ===
+            (destination.targetId ??
+              (destination.label ? `section:${destination.label}` : destination.section)),
       )
     : undefined;
   const insertionOffset = targetRow
@@ -526,8 +573,9 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                         }}
                       >
                         <Text className="text-sm font-t3-semibold text-foreground-muted">
-                          {item.section[0]!.toUpperCase() + item.section.slice(1)} (
-                          {sections[item.section].length})
+                          {item.label === undefined
+                            ? `${item.section[0]!.toUpperCase() + item.section.slice(1)} (${sections[item.section].length})`
+                            : `${item.label} (${item.count})`}
                         </Text>
                       </Pressable>
                     )}

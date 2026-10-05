@@ -15,10 +15,15 @@ import {
   type SidebarSection,
 } from "./Sidebar.logic";
 
-const thread = (key: string, section: SidebarSection): SidebarListItem => ({
+const thread = (
+  key: string,
+  section: SidebarSection,
+  label: string | null = null,
+): SidebarListItem => ({
   kind: "thread",
   key,
   section,
+  label,
 });
 const marker = (marker: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker });
 const pinnedHeader = marker("pinned-header");
@@ -318,6 +323,30 @@ describe("sidebar drag projection", () => {
     }
     const lastIndex = items.length - 1;
     expect(strategy({ ...args, index: lastIndex })).toEqual(stationary);
+  });
+
+  it("previews a row dragged into a user section beneath that section's header", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      { kind: "marker", marker: "section-header", label: "Review" },
+      thread("r1", "active", "Review"),
+      settledHeader,
+      thread("s1", "settled"),
+    ];
+    const moved = preview(
+      { items, settledOrder: ["s1"], settledExpanded: true, boundaryLabelHeight: 0 },
+      "a1",
+      "r1",
+    );
+    // a1 leaves the plain inbox: everything below it, up to its new slot after r1, shifts up.
+    for (const id of ["a2", sidebarMarkerId("section-header", "Review"), "r1"]) {
+      expect(moved.get(id)).toEqual({ ...stationary, y: -83 });
+    }
+    expect(moved.get("a1")).toEqual(stationary);
+    expect(moved.get("s1")).toEqual(stationary);
   });
 
   const pinned = [

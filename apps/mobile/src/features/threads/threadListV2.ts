@@ -33,6 +33,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 import {
   applyPendingThreadOrder,
+  groupThreadsBySection,
   reconcilePendingThreadOrder,
   type PendingThreadOrder,
 } from "./threadOrder";
@@ -236,6 +237,8 @@ export function getThreadListV2OrderedSection(input: {
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
+  /** Active rows come back group by group (plain rows, then sections). */
+  readonly sectionEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): EnvironmentThreadShell[] {
   const threads = input.threads.filter((thread) => {
     if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
@@ -263,7 +266,10 @@ export function getThreadListV2OrderedSection(input: {
     input.pendingOrder?.section === input.section
       ? reconcilePendingThreadOrder(input.pendingOrder, ordered)
       : null;
-  return applyPendingThreadOrder(ordered, input.section, pending);
+  const applied = applyPendingThreadOrder(ordered, input.section, pending);
+  return input.section === "active" && input.sectionEnvironmentIds !== undefined
+    ? groupThreadsBySection(applied, input.sectionEnvironmentIds).flatMap((group) => group.threads)
+    : applied;
 }
 
 export interface ThreadListV2Item {
@@ -282,6 +288,14 @@ export interface ThreadListV2Layout {
   readonly hiddenSettledCount: number;
   /** Working threads folded away by the Working section beta. */
   readonly workingCount: number;
+  /** Named sections of the active inbox, after the plain active rows. Each
+      group's rows start at `index` in `items` and run to the next group (or
+      the Working shelf header); a collapsed group keeps only the selected row. */
+  readonly sections: ReadonlyArray<{
+    readonly name: string;
+    readonly count: number;
+    readonly index: number;
+  }>;
   /** Index in `items` where the Working shelf header belongs. */
   readonly workingShelfHeaderIndex: number | null;
   /** Snoozed threads matching the current filters. */
@@ -340,6 +354,16 @@ export interface ThreadListV2PendingListItem {
   readonly showTrailingDivider: boolean;
 }
 
+export interface ThreadListV2SectionListItem {
+  readonly type: "v2-section";
+  readonly key: string;
+  readonly name: string;
+  readonly count: number;
+  readonly expanded: boolean;
+  /** See the snoozed shelf header's field. */
+  readonly disabled: boolean;
+}
+
 export interface ThreadListV2WorkingShelfListItem {
   readonly type: "v2-working-shelf";
   readonly key: "v2-working-shelf";
@@ -373,6 +397,7 @@ export interface ThreadListV2SettledShelfListItem {
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
+  | ThreadListV2SectionListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
@@ -385,6 +410,7 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
+    value.type === "v2-section" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
@@ -426,6 +452,14 @@ export function threadListV2ListItemsAreEqual(
         previous.pendingTask === item.pendingTask &&
         previous.showPendingDivider === item.showPendingDivider &&
         previous.showTrailingDivider === item.showTrailingDivider
+      );
+    case "v2-section":
+      return (
+        previous.type === "v2-section" &&
+        previous.name === item.name &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled
       );
     case "v2-working-shelf":
       return (
@@ -474,8 +508,8 @@ function resolveThreadListV2ItemTimeLabel(
 }
 
 /**
- * Builds the shared mobile order: active → pending → working shelf (beta) →
- * snoozed shelf → settled. Pending tasks are waiting rather than asking, and
+ * Builds the shared mobile order: active → sections → pending → working shelf
+ * (beta) → snoozed shelf → settled. Pending tasks are waiting rather than asking, and
  * busy or parked work remains reachable without competing with either the
  * inbox or settled history.
  */
@@ -485,6 +519,8 @@ export function buildThreadListV2ListItems(input: {
   readonly workingCount?: number;
   readonly workingShelfExpanded?: boolean;
   readonly workingShelfHeaderIndex?: number | null;
+  readonly sections?: ThreadListV2Layout["sections"];
+  readonly collapsedSections?: ReadonlySet<string>;
   readonly snoozedCount?: number;
   readonly snoozedShelfExpanded?: boolean;
   readonly snoozedShelfHeaderIndex?: number | null;
@@ -559,9 +595,23 @@ export function buildThreadListV2ListItems(input: {
   const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
-  const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...threadItems.slice(0, activeEnd), ...pendingItems];
+  const sectionsEnd = workingShelfHeaderIndex ?? workingEnd;
+  const sections = input.sections ?? [];
+  const activeEnd = sections[0]?.index ?? sectionsEnd;
   const shelfDisabled = input.shelfPreferencesLoading === true;
+  const result: ThreadListV2ListItem[] = threadItems.slice(0, activeEnd);
+  sections.forEach((section, index) => {
+    result.push({
+      type: "v2-section",
+      key: `v2-section:${section.name}`,
+      name: section.name,
+      count: section.count,
+      expanded: input.collapsedSections?.has(section.name) !== true,
+      disabled: shelfDisabled,
+    });
+    result.push(...threadItems.slice(section.index, sections[index + 1]?.index ?? sectionsEnd));
+  });
+  result.push(...pendingItems);
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({
       type: "v2-working-shelf",
@@ -643,6 +693,11 @@ export function buildThreadListV2Items(input: {
   readonly snoozedShelfExpanded?: boolean;
   /** Expands the settled shelf into rows. Expanded is the default. */
   readonly settledShelfExpanded?: boolean;
+  /** Environments whose server supports thread sections. Threads elsewhere
+      stay in the plain active rows. Absent = no sections (tests). */
+  readonly sectionEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  /** Names of sections folded to their header. */
+  readonly collapsedSections?: ReadonlySet<string>;
   /** The selected thread remains visible on an otherwise collapsed shelf so
       a split-view detail can never lose its navigation row. */
   readonly selectedThreadKey?: string | null;
@@ -777,14 +832,26 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
-  for (const thread of orderedActive) {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: false,
-      isLast: false,
-    });
+  const sections: { name: string; count: number; index: number }[] = [];
+  for (const group of groupThreadsBySection(orderedActive, input.sectionEnvironmentIds)) {
+    let visible = group.threads;
+    if (group.label !== null) {
+      sections.push({ name: group.label, count: group.threads.length, index: items.length });
+      if (input.collapsedSections?.has(group.label) === true) {
+        visible = group.threads.filter(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
+      }
+    }
+    for (const thread of visible) {
+      items.push({
+        thread,
+        variant: "card",
+        snoozed: false,
+        pinned: false,
+        isLast: false,
+      });
+    }
   }
   const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
   for (const thread of visibleWorking) {
@@ -823,6 +890,7 @@ export function buildThreadListV2Items(input: {
   return {
     items,
     hiddenSettledCount: orderedSettled.length - pagedSettled.length,
+    sections,
     workingCount: orderedWorking.length,
     workingShelfHeaderIndex,
     snoozedCount: orderedSnoozed.length,

@@ -147,7 +147,8 @@ export function resolveSidebarThreadSection(input: {
 }
 
 /** Sortable ids: thread rows use their scoped key; structural items use a
-    colon-free prefix: scoped thread keys always contain a colon. */
+    colon-free prefix: scoped thread keys always contain a colon. Section
+    labels are URI-encoded, which never emits a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
@@ -160,43 +161,68 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  /** A user-named group of inbox rows; the item carries its label. */
+  | "section-header";
 
-export function sidebarMarkerId(marker: SidebarListMarker): string {
-  return `${SIDEBAR_MARKER_PREFIX}${marker}`;
+export function sidebarMarkerId(marker: SidebarListMarker, label?: string): string {
+  return marker === "section-header"
+    ? `${SIDEBAR_MARKER_PREFIX}section-${encodeURIComponent(label ?? "")}`
+    : `${SIDEBAR_MARKER_PREFIX}${marker}`;
 }
 
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      /** The user section an inbox row sits under; null everywhere else. */
+      readonly label: string | null;
+    }
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker; readonly label?: string };
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker, item.label);
 }
 
 /** The section a slot belongs to, read off the markers around it: from
     the top down, everything before the pinned divider is pinned, then the
     inbox until the first shelf header, each shelf until the next header,
-    then settled. */
-function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
+    then settled. Inbox rows under a section header carry its label; the
+    next shelf header ends it. */
+function sectionAtSidebarSlot(
+  items: readonly SidebarListItem[],
+  index: number,
+): { readonly section: SidebarSection; readonly label: string | null } {
   let section: SidebarSection = "pinned";
+  let label: string | null = null;
   for (let i = 0; i < index && i < items.length; i += 1) {
     const item = items[i]!;
     if (item.kind !== "marker") continue;
+    label = null;
     if (item.marker === "pinned-divider") section = "active";
-    else if (item.marker === "working-header") section = "working";
+    else if (item.marker === "section-header") {
+      section = "active";
+      label = item.label ?? null;
+    } else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
   }
-  return section;
+  return { section, label };
 }
 
 /** Resolve the destination section and manual order from an arrayMove across
  * the separators. The working and snoozed shelves are never destinations. */
 export type SidebarDropTarget = {
   readonly section: "pinned" | "active" | "settled";
+  /** The user section of an active drop; null for the plain inbox. */
+  readonly label: string | null;
   readonly pinnedOrder: readonly string[];
+  /** The rows under `label` after the move. */
   readonly activeOrder: readonly string[];
+  /** The pointer is on a section header with no rows beneath it, so the drop
+      lands at the top of rows the list does not render. */
+  readonly intoCollapsed?: true;
 };
 
 export function resolveSidebarDropTarget(
@@ -207,26 +233,39 @@ export function resolveSidebarDropTarget(
   const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
   const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
   if (activeIndex === -1 || overIndex === -1 || items[activeIndex]?.kind !== "thread") return null;
+  const over = items[overIndex]!;
+  const intoCollapsed =
+    over.kind === "marker" &&
+    over.marker === "section-header" &&
+    items[overIndex + 1]?.kind !== "thread";
+  const insertIndex =
+    over.kind === "marker" && over.marker === "section-header" && activeIndex > overIndex
+      ? overIndex + 1
+      : overIndex;
   const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, items[activeIndex]!);
-  const section = sectionAtSidebarSlot(moved, overIndex);
+  moved.splice(insertIndex, 0, items[activeIndex]!);
+  const { section, label } = sectionAtSidebarSlot(moved, insertIndex);
   if (section === "working" || section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
+  let currentLabel: string | null = null;
   for (const item of moved) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
-      else if (
+      else if (item.marker === "section-header") {
+        currentSection = "active";
+        currentLabel = item.label ?? null;
+      } else if (
         item.marker === "working-header" ||
         item.marker === "snoozed-header" ||
         item.marker === "settled-header"
       )
         break;
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
-    else activeOrder.push(item.key);
+    else if (currentLabel === label) activeOrder.push(item.key);
   }
-  return { section, pinnedOrder, activeOrder };
+  return { section, label, pinnedOrder, activeOrder, ...(intoCollapsed ? { intoCollapsed } : {}) };
 }
 
 export type SidebarThreadDropPlan =
@@ -254,18 +293,33 @@ export type SidebarThreadDropPlan =
       readonly unpin: boolean;
       readonly unsettle: boolean;
       readonly unsnooze: boolean;
+      /** The section to write: a name, null to clear it, undefined to leave it. */
+      readonly setLabel: string | null | undefined;
     }
   | { readonly kind: "settle" };
 
 /** What dropping in `to` does to a thread lifted from `from`, for the badge
     on the lifted row. Null while reordering inside one section and for the
     working and snoozed shelves, which cannot be drop targets. */
-export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+export type SidebarDropVerb =
+  | "pin"
+  | "unpin"
+  | "settle"
+  | "unsettle"
+  | "wake"
+  | "section"
+  | "unsection";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
+  fromLabel: string | null = null,
+  toLabel: string | null = null,
 ): SidebarDropVerb | null {
+  if (to === "active" && (from !== "active" || fromLabel !== toLabel)) {
+    if (toLabel !== null) return "section";
+    if (from === "active") return "unsection";
+  }
   if (to === null || to === from || to === "working" || to === "snoozed") return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
@@ -308,13 +362,19 @@ export function planSidebarThreadDrop(input: {
   /** Snoozed threads can retain pinning and settlement beneath the shelf. */
   readonly activePinned?: boolean;
   readonly activeSettled?: boolean;
+  /** The dragged thread's own user section, which a pinned or settled row keeps. */
+  readonly activeLabel?: string | null;
   readonly supportsSettlement?: boolean;
+  readonly supportsSections?: boolean;
   readonly target: SidebarDropTarget;
   /** All pinned keys in displayed order before the drop. */
   readonly pinnedOrder: readonly string[];
   readonly pinnedKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly reorderableKeys?: ReadonlySet<string>;
+  /** The plain inbox in displayed order, without any user section's rows. */
   readonly activeOrder: readonly string[];
+  /** Every user section's rows in displayed order, collapsed rows included. */
+  readonly sectionOrders?: ReadonlyMap<string, readonly string[]>;
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
   /** Working beta: the inbox sorts by time, so drops only change lifecycle. */
@@ -338,10 +398,13 @@ export function planSidebarThreadDrop(input: {
   }
   switch (target.section) {
     case "active": {
+      if (target.label !== null && input.supportsSections === false) return { kind: "none" };
+      const currentLabel = input.supportsSections === false ? null : (input.activeLabel ?? null);
+      const setLabel = target.label === currentLabel ? undefined : target.label;
       // Like the settled tail: threads can enter a time-ordered inbox, but
       // not be arranged inside it.
       if (input.activeTimeOrdered) {
-        return activeSection === "active"
+        return activeSection === "active" && setLabel === undefined
           ? { kind: "none" }
           : {
               kind: "move-active",
@@ -350,13 +413,20 @@ export function planSidebarThreadDrop(input: {
               unpin: activePinned,
               unsettle: activeSettled,
               unsnooze: activeSection === "snoozed",
+              setLabel,
             };
       }
-      const order = target.activeOrder;
+      const sectionOrder =
+        target.label === null ? [] : (input.sectionOrders?.get(target.label) ?? []);
+      const order = target.intoCollapsed
+        ? [activeKey, ...sectionOrder.filter((key) => key !== activeKey)]
+        : target.activeOrder;
+      const currentOrder = target.label === null ? activeOrder : sectionOrder;
       if (
         activeSection === "active" &&
-        order.length === activeOrder.length &&
-        order.every((key, index) => key === activeOrder[index])
+        setLabel === undefined &&
+        order.length === currentOrder.length &&
+        order.every((key, index) => key === currentOrder[index])
       ) {
         return { kind: "none" };
       }
@@ -375,6 +445,7 @@ export function planSidebarThreadDrop(input: {
         unpin: activePinned,
         unsettle: activeSettled,
         unsnooze: activeSection === "snoozed",
+        setLabel,
       };
     }
     case "settled":
@@ -427,8 +498,14 @@ export function applySidebarThreadDrop<
     | "settledAt"
     | "settledOverride"
     | "unsettledAt"
-  >,
->(thread: T, section: "pinned" | "active" | "settled", now: string, orderKey?: string): T {
+  > & { section?: string | null },
+>(
+  thread: T,
+  section: "pinned" | "active" | "settled",
+  now: string,
+  orderKey?: string,
+  label?: string | null,
+): T {
   const wasSettled = thread.settledOverride === "settled";
   const awake = { ...thread, snoozedAt: null, snoozedUntil: null };
   if (section === "settled") {
@@ -450,6 +527,7 @@ export function applySidebarThreadDrop<
     pinnedAt: section === "pinned" ? (thread.pinnedAt ?? now) : null,
     pinOrderKey: section === "pinned" ? (orderKey ?? thread.pinOrderKey) : null,
     ...(section === "active" && orderKey !== undefined ? { activeOrderKey: orderKey } : {}),
+    ...(section === "active" && label !== undefined ? { section: label } : {}),
   };
 }
 

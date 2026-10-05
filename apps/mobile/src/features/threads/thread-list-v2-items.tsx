@@ -213,6 +213,24 @@ function ThreadListV2ShelfHeader(
   );
 }
 
+export const ThreadListV2SectionHeader = memo(function ThreadListV2SectionHeader(
+  props: ThreadListV2ShelfHeaderProps & { readonly name: string },
+) {
+  return (
+    <ThreadListV2Section
+      label={`${props.name} (${props.count})`}
+      pane={props.pane}
+      disclosure={{
+        expanded: props.expanded,
+        disabled: props.disabled,
+        onToggle: props.onToggle,
+        accessibilityLabel: `${props.name} section, ${props.count} ${props.count === 1 ? "thread" : "threads"}`,
+        accessibilityHint: `${props.expanded ? "Collapses" : "Expands"} the ${props.name} section.`,
+      }}
+    />
+  );
+});
+
 export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
 ) {
@@ -510,6 +528,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   readonly onSetThreadAutoSettle: (thread: EnvironmentThreadShell, enabled: boolean) => void;
+  /** Existing section names; undefined when the server predates thread sections. */
+  readonly sectionNames?: readonly string[];
+  readonly onSetThreadSection: (thread: EnvironmentThreadShell, section: string | null) => void;
+  readonly onNewThreadSection: (thread: EnvironmentThreadShell) => void;
   /** False on environments whose server predates thread.settle/unsettle:
       swipe + menu fall back to Archive instead of failing on use. */
   readonly settlementSupported: boolean;
@@ -556,6 +578,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onSetThreadAutoSettle,
+    onSetThreadSection,
+    onNewThreadSection,
     onMoveThread,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -705,6 +729,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       variant,
     ],
   );
+  const sectionMenuItems = useMemo<MenuAction[]>(
+    () =>
+      props.sectionNames === undefined
+        ? []
+        : [
+            {
+              id: "section",
+              title: "Move to section",
+              image: "folder",
+              subactions: [
+                ...props.sectionNames
+                  .filter((name) => name !== thread.section)
+                  .map((name) => ({ id: `section:set:${name}`, title: name })),
+                { id: "section:new", title: "New section…", image: "plus" },
+                ...(thread.section != null
+                  ? [{ id: "section:clear", title: "Remove from section", image: "xmark" }]
+                  : []),
+              ],
+            } satisfies MenuAction,
+          ],
+    [props.sectionNames, thread.section],
+  );
   // A submenu with the current option checked, matching web. This is a
   // per-thread setting, not a lifecycle verb.
   const autoSettleMenuItems = useMemo<MenuAction[]>(
@@ -752,21 +798,29 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         subactions: snoozePresetActions,
       },
       ...arrangementMenuItems,
+      ...sectionMenuItems,
       ...titleMenuItems,
       ...autoSettleMenuItems,
       { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
     ],
-    [arrangementMenuItems, autoSettleMenuItems, snoozePresetActions, titleMenuItems],
+    [
+      arrangementMenuItems,
+      autoSettleMenuItems,
+      sectionMenuItems,
+      snoozePresetActions,
+      titleMenuItems,
+    ],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
     () => [
       CARD_MENU_ACTIONS[0]!,
       ...arrangementMenuItems,
+      ...sectionMenuItems,
       ...titleMenuItems,
       ...autoSettleMenuItems,
       ...CARD_MENU_ACTIONS.slice(1),
     ],
-    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
+    [arrangementMenuItems, autoSettleMenuItems, sectionMenuItems, titleMenuItems],
   );
   // Settled and snoozed rows keep the setting too, matching web where every
   // row shares one menu builder.
@@ -776,11 +830,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...arrangementMenuItems.filter(
         (action) => action.id !== "move-up" && action.id !== "move-down",
       ),
+      ...sectionMenuItems,
       ...titleMenuItems,
       ...autoSettleMenuItems,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
+    [arrangementMenuItems, autoSettleMenuItems, sectionMenuItems, titleMenuItems],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -795,10 +850,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => [
       LEGACY_MENU_ACTIONS[0]!,
       ...arrangementMenuItems,
+      ...sectionMenuItems,
       ...titleMenuItems,
       LEGACY_MENU_ACTIONS[1]!,
     ],
-    [arrangementMenuItems, titleMenuItems],
+    [arrangementMenuItems, sectionMenuItems, titleMenuItems],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -811,6 +867,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
       if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
       if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
+      if (nativeEvent.event.startsWith("section:set:")) {
+        onSetThreadSection(thread, nativeEvent.event.slice("section:set:".length));
+      }
+      if (nativeEvent.event === "section:new") onNewThreadSection(thread);
+      if (nativeEvent.event === "section:clear") onSetThreadSection(thread, null);
       if (nativeEvent.event === "move-up") handleMoveUp();
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
@@ -837,6 +898,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      onNewThreadSection,
+      onSetThreadSection,
       thread,
       handleArchive,
       handleDelete,

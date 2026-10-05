@@ -78,6 +78,15 @@ function environmentSupportsTitleRegeneration(
   );
 }
 
+function environmentSupportsSections(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSections === true
+  );
+}
+
+const THREAD_SECTION_NAME_MAX_LENGTH = 64;
+
 type ThreadListAction = "archive" | "unarchive" | "delete" | "settle" | "unsettle";
 
 const ACTION_VERBS: Record<ThreadListAction, string> = {
@@ -253,6 +262,11 @@ export function useThreadListActions(): {
     direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
+  readonly setThreadSection: (
+    thread: EnvironmentThreadShell,
+    section: string | null,
+  ) => Promise<boolean>;
+  readonly promptThreadSection: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
@@ -264,6 +278,9 @@ export function useThreadListActions(): {
     reportFailure: false,
   });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const setSectionMutation = useAtomCommand(threadEnvironment.setSection, {
     reportFailure: false,
   });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
@@ -563,6 +580,60 @@ export function useThreadListActions(): {
     [updateThreadMetadata],
   );
 
+  const setThreadSection = useCallback(
+    async (thread: EnvironmentThreadShell, section: string | null) => {
+      const name = section?.trim() ?? null;
+      if (name !== null && (name.length === 0 || name.length > THREAD_SECTION_NAME_MAX_LENGTH)) {
+        Alert.alert(
+          "Could not move thread",
+          `Section names must be 1 to ${THREAD_SECTION_NAME_MAX_LENGTH} characters.`,
+        );
+        return false;
+      }
+      if (!environmentSupportsSections(thread.environmentId)) {
+        Alert.alert(
+          "Could not move thread",
+          "This environment's server does not support sections yet. Update the server to use them.",
+        );
+        return false;
+      }
+      if (name === (thread.section ?? null)) return true;
+      selectionHaptic();
+      const result = await setSectionMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, section: name },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not move thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be moved to that section.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [setSectionMutation],
+  );
+  const promptThreadSection = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      const commit = (name: string) => void setThreadSection(thread, name);
+      if (Platform.OS === "ios") {
+        Alert.prompt("New section", undefined, (name) => commit(name ?? ""), "plain-text");
+        return;
+      }
+      showTextInputDialog({
+        title: "New section",
+        initialValue: "",
+        confirmText: "Move",
+        onConfirm: commit,
+      });
+    },
+    [setThreadSection],
+  );
+
   // Plan against the complete section so filtering does not change a move.
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
@@ -608,10 +679,16 @@ export function useThreadListActions(): {
         );
         return false;
       }
+      const sectionEnvironmentIds = new Set(
+        [...configs].flatMap(([id, config]) =>
+          config.environment.capabilities.threadSections === true ? [id] : [],
+        ),
+      );
       const ordered = getThreadListV2OrderedSection({
         threads: shells,
         section,
         now: new Date().toISOString(),
+        sectionEnvironmentIds,
         queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
         settlementEnvironmentIds: new Set(
           [...configs].flatMap(([id, config]) =>
@@ -624,13 +701,15 @@ export function useThreadListActions(): {
           ),
         ),
       });
-      const assignments = createThreadMovePlanner({
+      const plan = createThreadMovePlanner({
         allThreads: shells,
         ordered,
         section,
         reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
+        sectionEnvironmentIds,
       })(scopedThreadKey(thread.environmentId, thread.id), direction);
-      if (assignments === null) return false;
+      if (plan === null) return false;
+      const { assignments, setLabel } = plan;
       const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
       const crossSection = !ordered.some(
         (row) => row.id === thread.id && row.environmentId === thread.environmentId,
@@ -656,8 +735,7 @@ export function useThreadListActions(): {
             createPendingThreadOrder({
               section,
               ordered,
-              movedId: scopedThreadKey(thread.environmentId, thread.id),
-              direction,
+              orderedIds: plan.orderedIds,
               assignments,
             }),
           );
@@ -683,6 +761,7 @@ export function useThreadListActions(): {
             if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
           }
         }
+        if (setLabel !== undefined && !(await setThreadSection(thread, setLabel))) return false;
         for (const assignment of assignments) {
           if (
             crossSection &&
@@ -720,6 +799,7 @@ export function useThreadListActions(): {
     },
     [
       settleThread,
+      setThreadSection,
       reorderActiveMutation,
       reorderPinnedMutation,
       pinMutation,
@@ -743,6 +823,8 @@ export function useThreadListActions(): {
     setThreadAutoSettle,
     moveThread,
     renameThread,
+    setThreadSection,
+    promptThreadSection,
     regenerateThreadTitle,
   };
 }

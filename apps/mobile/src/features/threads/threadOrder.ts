@@ -14,13 +14,18 @@ export type ThreadMoveDestination =
       readonly targetId: string | null;
       readonly section?: "pinned" | "active" | "settled";
       readonly placement: "before" | "after";
+      /** Active section group the row lands in. Defaults to the target row's
+          group, or to the row's own group when there is no target row. */
+      readonly label?: string | null;
     };
 
-/** Resolve against stable row identities, including rows hidden by a filter. */
+/** Resolve against stable row identities, including rows hidden by a filter.
+    `allowUnchanged` keeps a move that only changes the section label. */
 export function threadOrderAfterMove(
   orderedIds: readonly string[],
   movedId: string,
   destination: ThreadMoveDestination,
+  allowUnchanged = false,
 ): string[] | null {
   if (typeof destination === "object" && destination.section === "settled") return null;
   const from = orderedIds.indexOf(movedId);
@@ -41,7 +46,7 @@ export function threadOrderAfterMove(
       to = target + (destination.placement === "after" ? 1 : 0);
     }
   }
-  if (to === from) return null;
+  if (to === from && !allowUnchanged) return null;
   result.splice(to, 0, movedId);
   return result;
 }
@@ -55,7 +60,35 @@ export type OrderRow = Pick<
   | "createdAt"
   | "unsettledAt"
   | "pinnedAt"
+  | "section"
 >;
+
+export function threadSectionOf(
+  row: Pick<OrderRow, "environmentId" | "section">,
+  sectionEnvironmentIds: ReadonlySet<EnvironmentId> | undefined,
+): string | null {
+  return sectionEnvironmentIds?.has(row.environmentId) === true ? (row.section ?? null) : null;
+}
+
+/** Plain rows first, then named sections alphabetically; row order within a
+    group is kept. */
+export function groupThreadsBySection<T extends Pick<OrderRow, "environmentId" | "section">>(
+  threads: readonly T[],
+  sectionEnvironmentIds: ReadonlySet<EnvironmentId> | undefined,
+): { readonly label: string | null; readonly threads: T[] }[] {
+  const groups = new Map<string | null, T[]>();
+  for (const thread of threads) {
+    const label = threadSectionOf(thread, sectionEnvironmentIds);
+    const group = groups.get(label);
+    if (group) group.push(thread);
+    else groups.set(label, [thread]);
+  }
+  return [...groups]
+    .sort(([left], [right]) =>
+      left === null ? -1 : right === null ? 1 : left.localeCompare(right),
+    )
+    .map(([label, groupThreads]) => ({ label, threads: groupThreads }));
+}
 
 export interface PendingThreadOrder {
   readonly section: "pinned" | "active";
@@ -77,13 +110,23 @@ function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   };
 }
 
+export interface ThreadMovePlan {
+  readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+  /** Section label to write before the order keys; undefined leaves it alone. */
+  readonly setLabel: string | null | undefined;
+  readonly orderedIds: string[];
+}
+
 /** Keep every visible row as an anchor, but only offer plans whose key writes
- * are supported. Menu availability and execution use this same planner. */
+ * are supported. Menu availability and execution use this same planner.
+ * `ordered` lists active rows group by group (plain rows, then sections);
+ * Move up/down at a group edge moves the row into the neighbouring group. */
 export function createThreadMovePlanner(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
   readonly section: PendingThreadOrder["section"];
   readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly sectionEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }) {
   const orderedIds = input.ordered.map(rowId);
   const keysById = new Map(
@@ -97,16 +140,50 @@ export function createThreadMovePlanner(input: {
       .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
       .map(rowId),
   );
-  return (movedId: string, direction: ThreadMoveDestination) => {
+  const sectionEnvironmentIds =
+    input.section === "active" ? input.sectionEnvironmentIds : undefined;
+  const rowsById = new Map(
+    [...input.ordered, ...(input.allThreads ?? [])].map((row) => [rowId(row), row]),
+  );
+  const labelOf = (id: string) => {
+    const row = rowsById.get(id);
+    return row === undefined ? null : threadSectionOf(row, sectionEnvironmentIds);
+  };
+  return (movedId: string, direction: ThreadMoveDestination): ThreadMovePlan | null => {
     if (!writableIds.has(movedId)) return null;
-    const nextIds = threadOrderAfterMove(orderedIds, movedId, direction);
-    if (nextIds === null) return null;
-    const assignments = planPinnedReorder({ orderedIds: nextIds, keysById, movedId });
-    return assignments === null ||
-      assignments.length === 0 ||
-      assignments.some((assignment) => !writableIds.has(assignment.id))
+    const currentLabel = labelOf(movedId);
+    let targetLabel = currentLabel;
+    if (typeof direction === "string") {
+      const index = orderedIds.indexOf(movedId);
+      const neighborId = index < 0 ? undefined : orderedIds[index + (direction === "up" ? -1 : 1)];
+      if (neighborId !== undefined) targetLabel = labelOf(neighborId);
+    } else if (direction.label !== undefined) {
+      targetLabel = direction.label;
+    } else if (direction.targetId !== null) {
+      targetLabel = labelOf(direction.targetId);
+    }
+    const setLabel = targetLabel === currentLabel ? undefined : targetLabel;
+    if (
+      setLabel !== undefined &&
+      sectionEnvironmentIds?.has(rowsById.get(movedId)!.environmentId) !== true
+    ) {
+      return null;
+    }
+    const orderedIdsAfter =
+      typeof direction === "string" && setLabel !== undefined
+        ? [...orderedIds]
+        : threadOrderAfterMove(orderedIds, movedId, direction, setLabel !== undefined);
+    if (orderedIdsAfter === null) return null;
+    const assignments = planPinnedReorder({
+      orderedIds: orderedIdsAfter.filter((id) => id === movedId || labelOf(id) === targetLabel),
+      keysById,
+      movedId,
+    });
+    return assignments.length === 0 && setLabel === undefined
       ? null
-      : assignments;
+      : assignments.some((assignment) => !writableIds.has(assignment.id))
+        ? null
+        : { assignments, setLabel, orderedIds: orderedIdsAfter };
   };
 }
 
@@ -129,10 +206,42 @@ export function computeThreadMoveAvailability(input: {
   readonly section: PendingThreadOrder["section"];
   readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly pendingOrder?: PendingThreadOrder | null;
+  readonly sectionEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): Map<string, ThreadMoveAvailability> {
   const result = new Map<string, ThreadMoveAvailability>();
   // A reorder in flight locks the whole list until its receipt lands.
   if (input.pendingOrder != null) return result;
+  const sectionEnvironmentIds =
+    input.section === "active" ? input.sectionEnvironmentIds : undefined;
+  const groups = groupThreadsBySection(input.ordered, sectionEnvironmentIds);
+  if (groups.length > 1) {
+    // Moves inside a group are an ordinary section; only the two edge rows of
+    // each group can cross into a neighbouring group.
+    const planner = createThreadMovePlanner({ ...input, sectionEnvironmentIds });
+    groups.forEach(({ threads }, index) => {
+      const within = computeThreadMoveAvailability({
+        ...input,
+        ordered: threads,
+        sectionEnvironmentIds: undefined,
+      });
+      for (const [id, availability] of within) result.set(id, availability);
+      const firstId = rowId(threads[0]!);
+      const lastId = rowId(threads[threads.length - 1]!);
+      if (index > 0) {
+        result.set(firstId, {
+          ...result.get(firstId)!,
+          canMoveUp: planner(firstId, "up") !== null,
+        });
+      }
+      if (index < groups.length - 1) {
+        result.set(lastId, {
+          ...result.get(lastId)!,
+          canMoveDown: planner(lastId, "down") !== null,
+        });
+      }
+    });
+    return result;
+  }
   const rows = input.ordered;
   const orderedIds = rows.map(rowId);
   const indexById = new Map(orderedIds.map((id, index) => [id, index] as const));
@@ -250,15 +359,12 @@ export function computeThreadMoveAvailability(input: {
 export function createPendingThreadOrder(input: {
   readonly section: PendingThreadOrder["section"];
   readonly ordered: readonly OrderRow[];
-  readonly movedId: string;
-  readonly direction: ThreadMoveDestination;
+  readonly orderedIds: readonly string[];
   readonly assignments: readonly { readonly id: string; readonly orderKey: string }[];
 }): PendingThreadOrder {
-  const orderedIds = threadOrderAfterMove(input.ordered.map(rowId), input.movedId, input.direction);
-  if (orderedIds === null) throw new Error("Cannot begin an invalid thread move");
   return {
     section: input.section,
-    orderedIds,
+    orderedIds: input.orderedIds,
     before: new Map(input.ordered.map((row) => [rowId(row), rowOrder(row, input.section)])),
     assignments: new Map(input.assignments.map(({ id, orderKey }) => [id, orderKey])),
     confirmed: new Set(),

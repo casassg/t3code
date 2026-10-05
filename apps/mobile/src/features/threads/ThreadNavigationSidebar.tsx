@@ -29,7 +29,10 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useNavigationThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
-import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
+import {
+  useThreadListV2ShelfPreferences,
+  useThreadSectionNames,
+} from "./use-thread-list-v2-shelf-preferences";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
@@ -58,6 +61,7 @@ import { SidebarNavigationShell } from "./sidebar-navigation-shell";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionHeader,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -156,6 +160,8 @@ function ThreadNavigationSidebarPane(
     setThreadAutoSettle,
     moveThread,
     renameThread,
+    setThreadSection,
+    promptThreadSection,
     regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
@@ -291,6 +297,8 @@ function ThreadNavigationSidebarPane(
   );
   const {
     loaded: shelfPreferencesLoaded,
+    collapsedSections,
+    toggleSection,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
@@ -323,8 +331,10 @@ function ThreadNavigationSidebarPane(
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
+    sectionEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
+  const sectionNames = useThreadSectionNames(threads, sectionEnvironmentIds);
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
   // Up/down menu availability for every card, computed once per section per
@@ -336,12 +346,14 @@ function ThreadNavigationSidebarPane(
         allThreads: threads,
         section,
         pendingOrder,
+        sectionEnvironmentIds,
         reorderableEnvironmentIds:
           section === "pinned" ? pinReorderEnvironmentIds : activeReorderEnvironmentIds,
         ordered: getThreadListV2OrderedSection({
           threads,
           section,
           pendingOrder,
+          sectionEnvironmentIds,
           now: new Date().toISOString(),
           settlementEnvironmentIds,
           snoozeEnvironmentIds,
@@ -357,6 +369,7 @@ function ThreadNavigationSidebarPane(
     workingShelfEnabled,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
+    sectionEnvironmentIds,
     threads,
     pendingOrder,
     queuedThreadKeys,
@@ -384,9 +397,13 @@ function ThreadNavigationSidebarPane(
       inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
       settledShelfExpanded,
+      sectionEnvironmentIds,
+      collapsedSections,
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
+    sectionEnvironmentIds,
+    collapsedSections,
     workingShelfEnabled,
     workingShelfExpanded,
     pendingOrder,
@@ -443,6 +460,8 @@ function ThreadNavigationSidebarPane(
       workingCount: threadListV2Layout.workingCount,
       workingShelfExpanded,
       workingShelfHeaderIndex: threadListV2Layout.workingShelfHeaderIndex,
+      sections: threadListV2Layout.sections,
+      collapsedSections,
       snoozedCount: threadListV2Layout.snoozedCount,
       snoozedShelfExpanded,
       snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
@@ -471,6 +490,7 @@ function ThreadNavigationSidebarPane(
     queuedThreadKeys,
     threadMoveAvailability,
     selectedProjectRefs,
+    collapsedSections,
     settledShelfExpanded,
     shelfPreferencesLoaded,
     snoozedShelfExpanded,
@@ -609,8 +629,10 @@ function ThreadNavigationSidebarPane(
       threadSearchMatchByKey,
       // Rows read it for their reorder menu items.
       workingShelfEnabled,
+      sectionNames,
     }),
     [
+      sectionNames,
       props.selectedThreadKey,
       projectByKey,
       projectTitleByProjectKey,
@@ -725,6 +747,11 @@ function ThreadNavigationSidebarPane(
               onDeleteThread={confirmDeleteThread}
               onArchiveThread={archiveThread}
               onRenameThread={renameThread}
+              sectionNames={
+                sectionEnvironmentIds.has(thread.environmentId) ? sectionNames : undefined
+              }
+              onSetThreadSection={setThreadSection}
+              onNewThreadSection={promptThreadSection}
               onRegenerateThreadTitle={regenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
@@ -752,6 +779,17 @@ function ThreadNavigationSidebarPane(
             />
           );
         }
+        case "v2-section":
+          return (
+            <ThreadListV2SectionHeader
+              name={item.name}
+              count={item.count}
+              disabled={item.disabled}
+              expanded={item.expanded}
+              onToggle={() => toggleSection(item.name)}
+              pane="sidebar"
+            />
+          );
         case "v2-working-shelf":
           return (
             <ThreadListV2WorkingShelfHeader
@@ -813,6 +851,11 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       regenerateThreadTitle,
       renameThread,
+      promptThreadSection,
+      sectionEnvironmentIds,
+      sectionNames,
+      setThreadSection,
+      toggleSection,
       props.onNewThreadOnBranch,
       props.searchQuery,
       props.selectedThreadKey,
