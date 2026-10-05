@@ -10183,6 +10183,8 @@ export default function ChatView(props: ChatViewProps) {
         }),
       );
       failure = navigateResult._tag === "Failure" ? navigateResult : null;
+      if (failure === null)
+        void settleThread(scopeThreadRef(activeThread.environmentId, activeThread.id));
     }
 
     if (failure !== null) {
@@ -10231,6 +10233,7 @@ export default function ChatView(props: ChatViewProps) {
     startThreadTurn,
     environmentId,
     composerRef,
+    settleThread,
   ]);
 
   const getModelDisabledReason = useCallback(
