@@ -28,7 +28,7 @@ export function splitProposedPlanBlock(text: string): ProposedPlanSplit {
   if (openMatch === null) {
     let prose = text;
     const lineStart = text.lastIndexOf("\n") + 1;
-    const lastLine = text.slice(lineStart).trimStart();
+    const lastLine = text.slice(lineStart).trim();
     if (lastLine.length > 0 && OPEN_TAG.startsWith(lastLine)) {
       prose = text.slice(0, lineStart).trimEnd();
     }

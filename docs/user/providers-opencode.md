@@ -22,8 +22,8 @@ started on 1.x continue on 2.x.
 
 ## Plan mode
 
-Switch a thread to plan mode to use OpenCode's `plan` agent. T3 Code asks it to present
-the final plan in a plan block, which shows up as a plan card in the thread. A plan
+Switch a thread to plan mode to use OpenCode's `plan` agent. Its final plan appears as
+a plan card in the thread. A plan
 that was cut off by a failure or interruption is not offered for implementation. To
 implement a plan, switch the thread out of plan mode.
 

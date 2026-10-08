@@ -28,6 +28,7 @@ describe("splitProposedPlanBlock", () => {
   it("hides a trailing partial opening tag", () => {
     expect(splitProposedPlanBlock("Intro\n<propo").prose).toBe("Intro");
     expect(splitProposedPlanBlock("<proposed_plan").prose).toBe("");
+    expect(splitProposedPlanBlock("Intro\n<proposed_plan>\r").prose).toBe("Intro");
   });
 
   it("ignores a tag that is not on its own line", () => {
