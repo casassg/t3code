@@ -792,7 +792,7 @@ describe("OpenCodeAdapterV2", () => {
       yield* push(delta("p1", "\n<propo"));
       yield* push(delta("p1", "sed_plan>\n# Plan A"));
       yield* push(delta("p1", "\n</proposed_plan>"));
-      yield* push(part("p2", "<proposed_plan>\n# Plan B\n</proposed_plan>", 3));
+      yield* push(part("p2", "<proposed_plan>\n# Plan B", 3));
       yield* push({
         type: "message.updated",
         properties: {

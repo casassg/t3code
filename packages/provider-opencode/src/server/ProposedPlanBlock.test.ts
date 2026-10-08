@@ -48,4 +48,18 @@ describe("splitProposedPlanBlock", () => {
   it("keeps text without a plan block untouched", () => {
     expect(splitProposedPlanBlock("    indented code\n").prose).toBe("    indented code\n");
   });
+
+  it("yields no plan for an empty block", () => {
+    expect(splitProposedPlanBlock("Intro\n<proposed_plan>")).toEqual({
+      prose: "Intro",
+      plan: null,
+      planComplete: false,
+    });
+    expect(splitProposedPlanBlock("<proposed_plan>\n\n").plan).toBeNull();
+    expect(splitProposedPlanBlock("<proposed_plan>\n</proposed_plan>\nDone")).toEqual({
+      prose: "Done",
+      plan: null,
+      planComplete: false,
+    });
+  });
 });

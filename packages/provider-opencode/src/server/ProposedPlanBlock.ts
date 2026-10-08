@@ -39,13 +39,14 @@ export function splitProposedPlanBlock(text: string): ProposedPlanSplit {
   const rest = text.slice(bodyStart);
   const closeMatch = /(^|\n)[ \t]*<\/proposed_plan>[ \t]*(\r?\n|$)/.exec(rest);
   if (closeMatch === null) {
-    return { prose: before.trim(), plan: rest, planComplete: false };
+    return { prose: before.trim(), plan: rest.trim() === "" ? null : rest, planComplete: false };
   }
   const closeIndex = closeMatch.index;
   const after = rest.slice(closeIndex + closeMatch[0].length);
+  const plan = rest.slice(0, closeIndex).trim();
   return {
     prose: [before.trim(), after.trim()].filter(Boolean).join("\n\n"),
-    plan: rest.slice(0, closeIndex).trim(),
-    planComplete: true,
+    plan: plan === "" ? null : plan,
+    planComplete: plan !== "",
   };
 }
