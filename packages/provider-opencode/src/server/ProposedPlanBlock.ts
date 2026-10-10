@@ -1,4 +1,5 @@
 const OPEN_TAG = "<proposed_plan>";
+const CLOSE_TAG = "</proposed_plan>";
 
 export const PROPOSED_PLAN_BLOCK_INSTRUCTIONS = `When you present the final plan, wrap it in a \`<proposed_plan>\` block so the client can render it specially:
 
@@ -39,7 +40,13 @@ export function splitProposedPlanBlock(text: string): ProposedPlanSplit {
   const rest = text.slice(bodyStart);
   const closeMatch = /(^|\n)[ \t]*<\/proposed_plan>[ \t]*(\r?\n|$)/.exec(rest);
   if (closeMatch === null) {
-    return { prose: before.trim(), plan: rest.trim() === "" ? null : rest, planComplete: false };
+    let plan = rest;
+    const lineStart = rest.lastIndexOf("\n") + 1;
+    const lastLine = rest.slice(lineStart).trim();
+    if (lastLine.length > 0 && CLOSE_TAG.startsWith(lastLine)) {
+      plan = rest.slice(0, lineStart);
+    }
+    return { prose: before.trim(), plan: plan.trim() === "" ? null : plan, planComplete: false };
   }
   const closeIndex = closeMatch.index;
   const after = rest.slice(closeIndex + closeMatch[0].length);

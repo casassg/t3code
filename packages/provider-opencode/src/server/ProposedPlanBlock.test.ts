@@ -17,6 +17,15 @@ describe("splitProposedPlanBlock", () => {
     ).toEqual({ prose: "Intro\n\nOutro", plan: "# Plan\n- a", planComplete: true });
   });
 
+  it("hides a trailing partial closing tag", () => {
+    expect(splitProposedPlanBlock("<proposed_plan>\n# Plan\n</proposed_pla")).toEqual({
+      prose: "",
+      plan: "# Plan\n",
+      planComplete: false,
+    });
+    expect(splitProposedPlanBlock("<proposed_plan>\n</propo").plan).toBeNull();
+  });
+
   it("treats an unclosed block as a streaming plan", () => {
     expect(splitProposedPlanBlock("Intro\n<proposed_plan>\n# Pl")).toEqual({
       prose: "Intro",

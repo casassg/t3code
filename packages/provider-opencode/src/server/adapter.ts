@@ -64,10 +64,7 @@ import {
   summarizeNativeProtocolPayload,
 } from "@t3tools/provider-core/server/nativeProtocolLogging";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import {
-  PROPOSED_PLAN_BLOCK_INSTRUCTIONS,
-  splitProposedPlanBlock,
-} from "./ProposedPlanBlock.ts";
+import { PROPOSED_PLAN_BLOCK_INSTRUCTIONS, splitProposedPlanBlock } from "./ProposedPlanBlock.ts";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
